@@ -112,11 +112,3 @@ and `--data` to select a different dataset YAML.
 The paper names in `configs/aref-net.yaml` preserve the original full-model
 connectivity and computation. The module renaming does not alter the parameter
 keys or arithmetic.
-
-## Reproducibility note
-
-The original training records use automatic AdamW selection with an initial
-learning rate of 0.00125. The paper text reports a different batch size, so the
-entry point keeps the recorded settings and does not silently replace them.
-Reported metrics must be generated with the supplied evaluation script; this
-repository does not claim that stored paper values have been reproduced.
