@@ -10,10 +10,20 @@ MODEL_YAML = CODE_ROOT / "configs" / "aref-net.yaml"
 
 
 def register_modules():
-    framework = Path(os.environ.get("AREF_FRAMEWORK_ROOT", CODE_ROOT.parent)).resolve()
-    if not (framework / "ultralytics" / "nn" / "tasks.py").is_file():
+    configured = os.environ.get("AREF_FRAMEWORK_ROOT")
+    candidates = [
+        Path(configured).expanduser() if configured else None,
+        CODE_ROOT.parent,
+        CODE_ROOT / "framework",
+    ]
+    framework = next(
+        (path.resolve() for path in candidates if path and (path / "ultralytics" / "nn" / "tasks.py").is_file()),
+        None,
+    )
+    if framework is None:
         raise FileNotFoundError(
-            "Set AREF_FRAMEWORK_ROOT to the original YOLOMM project directory."
+            "YOLOMM framework not found. Set AREF_FRAMEWORK_ROOT to the directory "
+            "containing ultralytics/nn/tasks.py; see README.md."
         )
     sys.path.insert(0, str(framework))
     import ultralytics
