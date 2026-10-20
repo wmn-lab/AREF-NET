@@ -4,9 +4,9 @@ Official repository for AREF-NET for concrete defect instance segmentation.
 
 ## Code Availability
 
-The source code will be made publicly available in this repository after the paper is accepted for publication.
+The source code is available in [code/AREF-NET](code/AREF-NET/).
 
 ## Repository Structure
 
-- [code](code/): Source code will be released after the paper is accepted for publication.
+- [code/AREF-NET](code/AREF-NET/): AREF-NET source code, model configurations, and example scripts.
 - [data](data/): Dataset download link and extraction code.

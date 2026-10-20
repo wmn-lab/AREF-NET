@@ -1,0 +1,56 @@
+# RT-DETR-r18 MultiModal Mid-level Fusion with RD at fused P4/P5
+# 对应 YOLOMM: yolo11n-mm-mid-rd-fused（在融合后的 P4/P5 各插入 DConv RD）
+
+nc: 80
+scales:
+  l: [1.00, 1.00, 1024]
+
+backbone:
+  # RGB/X to P3 and fuse
+  - [-1, 1, ConvNormLayer, [32, 3, 2, None, False, 'relu'], 'RGB']
+  - [-1, 1, ConvNormLayer, [32, 3, 1, None, False, 'relu']]
+  - [-1, 1, ConvNormLayer, [64, 3, 1, None, False, 'relu']]
+  - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+  - [-1, 1, ConvNormLayer, [32, 3, 2, None, False, 'relu'], 'X']
+  - [-1, 1, ConvNormLayer, [32, 3, 1, None, False, 'relu']]
+  - [-1, 1, ConvNormLayer, [64, 3, 1, None, False, 'relu']]
+  - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+  - [3, 1, Blocks, [64, BasicBlock, 2, 2, 'relu']]
+  - [-1, 1, Blocks, [128, BasicBlock, 2, 3, 'relu']]  # 9 RGB P3
+  - [7, 1, Blocks, [64, BasicBlock, 2, 2, 'relu']]
+  - [-1, 1, Blocks, [128, BasicBlock, 2, 3, 'relu']]  # 11 X P3
+  - [[9, 11], 1, Concat, [1]]  # 12
+  - [-1, 1, Conv, [256, 1, 1]] # 13 fused P3
+
+  # P4/P5 then RD
+  - [-1, 1, Blocks, [256, BasicBlock, 2, 4, 'relu']] # 14 P4
+  - [-1, 1, DConv, [256, 0.8]]                       # 15 RD after P4
+  - [-1, 1, Blocks, [512, BasicBlock, 2, 5, 'relu']] # 16 P5
+  - [-1, 1, DConv, [256, 0.8]]                       # 17 RD after P5
+
+head:
+  - [17, 1, Conv, [256, 1, 1, None, 1, 1, False]] # 18 input_proj.2
+  - [-1, 1, AIFI, [1024, 8]]  # 19
+  - [-1, 1, Conv, [256, 1, 1]] # 20
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 21
+  - [15, 1, Conv, [256, 1, 1, None, 1, 1, False]] # 22 input_proj.1 from RD-P4
+  - [[-2, -1], 1, Concat, [1]] # 23
+  - [-1, 3, RepC3, [256, 0.5]] # 24
+  - [-1, 1, Conv, [256, 1, 1]] # 25
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 26
+  - [13, 1, Conv, [256, 1, 1, None, 1, 1, False]] # 27 input_proj.0
+  - [[-2, -1], 1, Concat, [1]] # 28
+  - [-1, 3, RepC3, [256, 0.5]] # 29
+
+  - [-1, 1, Conv, [256, 3, 2]] # 30
+  - [[-1, 25], 1, Concat, [1]] # 31
+  - [-1, 3, RepC3, [256, 0.5]] # 32
+
+  - [-1, 1, Conv, [256, 3, 2]] # 33
+  - [[-1, 20], 1, Concat, [1]] # 34
+  - [-1, 3, RepC3, [256, 0.5]] # 35
+
+  - [[29, 32, 35], 1, RTDETRDecoder, [nc, 256, 300, 4, 8, 3]] # 36
+

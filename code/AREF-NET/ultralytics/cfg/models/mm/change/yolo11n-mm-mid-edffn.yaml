@@ -1,0 +1,80 @@
+# Ultralytics YOLOMM 🚀 Mid-Fusion (EDFFN Test)
+# 在 P4/P5 融合后使用 EDFFN（频域 FFN，单路输入，要求 H/W 可被 patch_size 整除）。
+# 使用注释
+# - 模块: EDFFN（单路前馈，频域滤波）
+# - 输入: [B,C,H,W]；通道保持；通常置于 P4/P5 融合后
+# - 约束: H、W 必须能被 patch_size 整除
+# - 参数(args)顺序: [dim, patch_size, ffn_expansion, bias]
+#   · dim: 传 null 使用运行时输入通道自动推断（建议始终为 null）
+#   · patch_size: int（默认 8），要求 H/W 可整除
+#   · ffn_expansion: float（默认 4.0）
+#   · bias: bool（默认 True）
+# - 建议: 若分辨率不满足整除，可在上游通过步幅/上采样进行对齐
+
+# Parameters
+nc: 80 # number of classes
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+backbone:
+  # ========== RGB路径 (层0-10) ==========
+  - [-1, 1, Conv, [64, 3, 2], 'RGB']      # 0-P1/2 RGB路径起始
+  - [-1, 1, Conv, [128, 3, 2]]            # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]]     # 2
+  - [-1, 1, Conv, [256, 3, 2]]            # 3-P3/8 (RGB_P3)
+  - [-1, 2, C3k2, [512, False, 0.25]]     # 4
+  - [-1, 1, Conv, [512, 3, 2]]            # 5-P4/16
+  - [-1, 2, C3k2, [512, True]]            # 6 (RGB_P4)
+  - [-1, 1, Conv, [1024, 3, 2]]           # 7-P5/32
+  - [-1, 2, C3k2, [1024, True]]           # 8
+  - [-1, 1, SPPF, [1024, 5]]              # 9
+  - [-1, 2, C2PSA, [1024]]                # 10 (RGB_P5)
+
+  # ========== X路径 (层11-21) ==========
+  - [-1, 1, Conv, [64, 3, 2], 'X']        # 11-P1/2 X路径起始
+  - [-1, 1, Conv, [128, 3, 2]]            # 12-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]]     # 13
+  - [-1, 1, Conv, [256, 3, 2]]            # 14-P3/8 (X_P3)
+  - [-1, 2, C3k2, [512, False, 0.25]]     # 15
+  - [-1, 1, Conv, [512, 3, 2]]            # 16-P4/16
+  - [-1, 2, C3k2, [512, True]]            # 17 (X_P4)
+  - [-1, 1, Conv, [1024, 3, 2]]           # 18-P5/32
+  - [-1, 2, C3k2, [1024, True]]           # 19
+  - [-1, 1, SPPF, [1024, 5]]              # 20
+  - [-1, 2, C2PSA, [1024]]                # 21 (X_P5)
+
+  # ========== P4 / P5 融合 + EDFFN ==========
+  - [[6, 17], 1, Concat, [1]]                   # 22: P4 融合
+  - [-1, 2, C3k2, [1024, True]]                 # 23: Fused_P4
+  - [-1, 1, EDFFN, [null, 8, 4.0, True]]        # 24: Fused_P4_EDFFN（dim 自动、patch_size=8）
+
+  - [[10, 21], 1, Concat, [1]]                  # 25: P5 融合
+  - [-1, 2, C3k2, [1024, True]]                 # 26
+  - [-1, 1, C2PSA, [1024]]                      # 27: Fused_P5
+  - [-1, 1, EDFFN, [null, 8, 4.0, True]]        # 28: Fused_P5_EDFFN
+
+head:
+  # 自顶向下路径 (FPN)
+  - [28, 1, nn.Upsample, [None, 2, "nearest"]]  # 29 Fused_P5_EDFFN 上采样
+  - [[-1, 24], 1, Concat, [1]]                  # 30 + Fused_P4_EDFFN
+  - [-1, 2, C3k2, [512, False]]                 # 31
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]  # 32
+  - [[-1, 4], 1, Concat, [1]]                   # 33 + RGB_P3(4)
+  - [-1, 2, C3k2, [256, False]]                 # 34 (P3/8-small)
+
+  # 自底向上路径 (PAN)
+  - [-1, 1, Conv, [256, 3, 2]]                  # 35
+  - [[-1, 31], 1, Concat, [1]]                  # 36
+  - [-1, 2, C3k2, [512, False]]                 # 37 (P4/16-medium)
+
+  - [-1, 1, Conv, [512, 3, 2]]                  # 38
+  - [[-1, 27], 1, Concat, [1]]                  # 39
+  - [-1, 2, C3k2, [1024, True]]                 # 40 (P5/32-large)
+
+  - [[34, 37, 40], 1, Detect, [nc]]             # 41 Detect(P3, P4, P5)

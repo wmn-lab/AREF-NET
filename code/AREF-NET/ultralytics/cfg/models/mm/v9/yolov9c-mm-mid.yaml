@@ -1,0 +1,59 @@
+# Ultralytics YOLOv9-MM 🚀 Mid Fusion (RGB+X)
+# 策略：双路到 P5；在 P4/P5 两级特征融合；无需 RD 注入；标准 v9 头
+# 说明：X 通道与模态细节由数据层决定，这里仅标注输入路由
+
+nc: 80  # number of classes
+
+# Backbone（RGB 路径 0-9；X 路径 10-19）
+backbone:
+  # ===== RGB Branch =====
+  - [-1, 1, Conv, [64, 3, 2], 'RGB']           # 0-P1/2 RGB
+  - [-1, 1, Conv, [128, 3, 2]]                  # 1-P2/4
+  - [-1, 1, RepNCSPELAN4, [256, 128, 64, 1]]    # 2
+  - [-1, 1, ADown, [256]]                       # 3-P3/8 (RGB_P3)
+  - [-1, 1, RepNCSPELAN4, [512, 256, 128, 1]]   # 4
+  - [-1, 1, ADown, [512]]                       # 5-P4/16
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]   # 6 (RGB_P4)
+  - [-1, 1, ADown, [512]]                       # 7-P5/32
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]   # 8
+  - [-1, 1, SPPELAN, [512, 256]]                # 9 (RGB_P5)
+
+  # ===== X Branch =====
+  - [-1, 1, Conv, [64, 3, 2], 'X']              # 10-P1/2 X
+  - [-1, 1, Conv, [128, 3, 2]]                  # 11-P2/4
+  - [-1, 1, RepNCSPELAN4, [256, 128, 64, 1]]    # 12
+  - [-1, 1, ADown, [256]]                       # 13-P3/8 (X_P3)
+  - [-1, 1, RepNCSPELAN4, [512, 256, 128, 1]]   # 14
+  - [-1, 1, ADown, [512]]                       # 15-P4/16
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]   # 16 (X_P4)
+  - [-1, 1, ADown, [512]]                       # 17-P5/32
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]   # 18
+  - [-1, 1, SPPELAN, [512, 256]]                # 19 (X_P5)
+
+  # ===== Mid-level Fusion =====
+  - [[6, 16], 1, Concat, [1]]                   # 20 Fused_P4: RGB_P4 + X_P4
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]   # 21 F4
+
+  - [[9, 19], 1, Concat, [1]]                   # 22 Fused_P5: RGB_P5 + X_P5
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]   # 23 F5
+
+# Head（沿 v9c 结构）
+head:
+  - [23, 1, nn.Upsample, [None, 2, "nearest"]]   # 24 F5 upsample
+  - [[-1, 21], 1, Concat, [1]]                    # 25 cat F4
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]     # 26
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]   # 27
+  - [[-1, 4], 1, Concat, [1]]                     # 28 cat RGB_P3(4)
+  - [-1, 1, RepNCSPELAN4, [256, 256, 128, 1]]     # 29 (P3/8-small)
+
+  - [-1, 1, ADown, [256]]                         # 30
+  - [[-1, 26], 1, Concat, [1]]                    # 31
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]     # 32 (P4/16-medium)
+
+  - [-1, 1, ADown, [512]]                         # 33
+  - [[-1, 23], 1, Concat, [1]]                    # 34
+  - [-1, 1, RepNCSPELAN4, [512, 512, 256, 1]]     # 35 (P5/32-large)
+
+  - [[29, 32, 35], 1, Detect, [nc]]               # 36 Detect(P3, P4, P5)
+

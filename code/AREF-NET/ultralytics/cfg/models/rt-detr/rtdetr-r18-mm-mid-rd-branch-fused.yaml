@@ -1,0 +1,61 @@
+# RT-DETR-r18 MultiModal Mid-level Fusion with RD (branch-small + fused)
+# 对应 YOLOMM: yolo11n-mm-mid-rd-branch-fused（P3 两分支小 RD + 融合后 P4/P5 大 RD）
+
+nc: 80
+scales:
+  l: [1.00, 1.00, 1024]
+
+backbone:
+  # RGB/X to P3 with per-branch small RD
+  - [-1, 1, ConvNormLayer, [32, 3, 2, None, False, 'relu'], 'RGB']  # 0
+  - [-1, 1, ConvNormLayer, [32, 3, 1, None, False, 'relu']]         # 1
+  - [-1, 1, ConvNormLayer, [64, 3, 1, None, False, 'relu']]         # 2
+  - [-1, 1, nn.MaxPool2d, [3, 2, 1]]                                # 3
+  - [-1, 1, ConvNormLayer, [32, 3, 2, None, False, 'relu'], 'X']    # 4
+  - [-1, 1, ConvNormLayer, [32, 3, 1, None, False, 'relu']]         # 5
+  - [-1, 1, ConvNormLayer, [64, 3, 1, None, False, 'relu']]         # 6
+  - [-1, 1, nn.MaxPool2d, [3, 2, 1]]                                # 7
+
+  - [3, 1, Blocks, [64, BasicBlock, 2, 2, 'relu']]                  # 8
+  - [-1, 1, Blocks, [128, BasicBlock, 2, 3, 'relu']]               # 9 RGB P3
+  - [-1, 1, DConv, [128, 0.8]]                                      # 10 small RD on RGB_P3
+  - [7, 1, Blocks, [64, BasicBlock, 2, 2, 'relu']]                  # 11
+  - [-1, 1, Blocks, [128, BasicBlock, 2, 3, 'relu']]               # 12 X P3
+  - [-1, 1, DConv, [128, 0.8]]                                      # 13 small RD on X_P3
+
+  # P3 fusion → 256
+  - [[10, 13], 1, Concat, [1]]  # 14
+  - [-1, 1, Conv, [256, 1, 1]]  # 15 fused P3
+
+  # P4/P5 then large RD
+  - [15, 1, Blocks, [256, BasicBlock, 2, 4, 'relu']]  # 16 P4
+  - [-1, 1, DConv, [256, 0.8]]                        # 17 RD after P4
+  - [-1, 1, Blocks, [512, BasicBlock, 2, 5, 'relu']]  # 18 P5
+  - [-1, 1, DConv, [256, 0.8]]                        # 19 RD after P5
+
+head:
+  - [19, 1, Conv, [256, 1, 1, None, 1, 1, False]] # 20 input_proj.2
+  - [-1, 1, AIFI, [1024, 8]]  # 21
+  - [-1, 1, Conv, [256, 1, 1]] # 22
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 23
+  - [17, 1, Conv, [256, 1, 1, None, 1, 1, False]] # 24 input_proj.1
+  - [[-2, -1], 1, Concat, [1]] # 25
+  - [-1, 3, RepC3, [256, 0.5]] # 26
+  - [-1, 1, Conv, [256, 1, 1]] # 27
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 28
+  - [15, 1, Conv, [256, 1, 1, None, 1, 1, False]] # 29 input_proj.0
+  - [[-2, -1], 1, Concat, [1]] # 30
+  - [-1, 3, RepC3, [256, 0.5]] # 31
+
+  - [-1, 1, Conv, [256, 3, 2]] # 32
+  - [[-1, 27], 1, Concat, [1]] # 33
+  - [-1, 3, RepC3, [256, 0.5]] # 34
+
+  - [-1, 1, Conv, [256, 3, 2]] # 35
+  - [[-1, 22], 1, Concat, [1]] # 36
+  - [-1, 3, RepC3, [256, 0.5]] # 37
+
+  - [[31, 34, 37], 1, RTDETRDecoder, [nc, 256, 300, 4, 8, 3]] # 38
+

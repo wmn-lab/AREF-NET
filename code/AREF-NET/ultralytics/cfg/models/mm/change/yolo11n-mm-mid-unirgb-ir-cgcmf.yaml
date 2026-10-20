@@ -1,0 +1,79 @@
+# Ultralytics YOLOMM 🚀 中期融合（UniRGB-IR 并联门控+卷积混合融合）
+# 正式版设计：在 P3/P4/P5 三尺度对 RGB 与 IR 进行并联融合：ChannelGate 与 ConvMixFusion 并联，Concat 后 1x1 投影回目标通道。
+# 这样可同时获得通道级门控与分组卷积的多感受野混合优势，提升稳健性与表达力。
+
+nc: 80
+scales:
+  # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# 说明：
+# - 第5字段用于多模态路由（'RGB'/'X'）。
+# - IR 路采用 SpatialPriorModuleLite，从 X 图像直接构建 8/16/32 下采样特征。
+# - 融合策略：每个尺度同时用 ChannelGate 与 ConvMixFusion，将两者输出拼接后用 1x1 Conv 压回目标通道数。
+
+backbone:
+  # ========== RGB 主干（0-10）==========
+  - [-1, 1, Conv, [64, 3, 2], 'RGB']      # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]            # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]]     # 2
+  - [-1, 1, Conv, [256, 3, 2]]            # 3-P3/8 (RGB_P3 pre)
+  - [-1, 2, C3k2, [512, False, 0.25]]     # 4 (RGB_P3)
+  - [-1, 1, Conv, [512, 3, 2]]            # 5-P4/16
+  - [-1, 2, C3k2, [512, True]]            # 6 (RGB_P4)
+  - [-1, 1, Conv, [1024, 3, 2]]           # 7-P5/32
+  - [-1, 2, C3k2, [1024, True]]           # 8
+  - [-1, 1, SPPF, [1024, 5]]              # 9
+  - [-1, 1, C2PSA, [1024]]                # 10 (RGB_P5)
+
+  # ========== IR 轻量金字塔（11-14）==========
+  # embed_dims 与 yolo11n 宽度缩放(0.25)对齐：(128,128,256)
+  - [-1, 1, SpatialPriorModuleLite, [64, [128, 128, 256], 3], 'X']  # 11 -> (IR_P3, IR_P4, IR_P5)
+  - [11, 1, Index, [0]]                     # 12 IR_P3  (B,128,H/8,W/8)
+  - [11, 1, Index, [1]]                     # 13 IR_P4  (B,128,H/16,W/16)
+  - [11, 1, Index, [2]]                     # 14 IR_P5  (B,256,H/32,W/32)
+
+  # ========== 三尺度并联融合（15-26）==========
+  # P3: ChannelGate 与 ConvMixFusion 并联 -> 拼接 -> 1x1 投影回 128c
+  - [[4, 12], 1, ChannelGate,   [128]]      # 15 cg_p3
+  - [[4, 12], 1, ConvMixFusion, [128]]      # 16 cmf_p3（默认 kernels=(3,3,5,7), groups=4）
+  - [[15, 16], 1, Concat, [1]]               # 17 cat_p3 (256c)
+  - [-1, 1, Conv, [128, 1, 1]]               # 18 Fused_P3 (128c)
+
+  # P4: 同上，回 128c
+  - [[6, 13], 1, ChannelGate,   [128]]      # 19 cg_p4
+  - [[6, 13], 1, ConvMixFusion, [128]]      # 20 cmf_p4
+  - [[19, 20], 1, Concat, [1]]               # 21 cat_p4 (256c)
+  - [-1, 1, Conv, [128, 1, 1]]               # 22 Fused_P4 (128c)
+
+  # P5: 同上，回 256c
+  - [[10, 14], 1, ChannelGate,   [256]]     # 23 cg_p5
+  - [[10, 14], 1, ConvMixFusion, [256]]     # 24 cmf_p5
+  - [[23, 24], 1, Concat, [1]]               # 25 cat_p5 (512c)
+  - [-1, 1, Conv, [256, 1, 1]]               # 26 Fused_P5 (256c)
+
+head:
+  # 自顶向下（FPN）
+  - [26, 1, nn.Upsample, [None, 2, "nearest"]]  # 27 Fused_P5 上采样
+  - [[-1, 22], 1, Concat, [1]]                   # 28 汇合 Fused_P4
+  - [-1, 2, C3k2, [512, False]]                  # 29
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]  # 30
+  - [[-1, 18], 1, Concat, [1]]                   # 31 汇合 Fused_P3
+  - [-1, 2, C3k2, [256, False]]                  # 32 (P3/8-small)
+
+  # 自底向上（PAN）
+  - [-1, 1, Conv, [256, 3, 2]]                   # 33
+  - [[-1, 29], 1, Concat, [1]]                   # 34
+  - [-1, 2, C3k2, [512, False]]                  # 35 (P4/16-medium)
+
+  - [-1, 1, Conv, [512, 3, 2]]                   # 36
+  - [[-1, 26], 1, Concat, [1]]                   # 37
+  - [-1, 2, C3k2, [1024, True]]                  # 38 (P5/32-large)
+
+  - [[32, 35, 38], 1, Detect, [nc]]              # 39 Detect(P3,P4,P5)
+

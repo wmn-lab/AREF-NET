@@ -1,0 +1,69 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# RT-DETR-r18 MultiModal Mid-level Fusion model with PST (Pyramid Sparse Transformer)
+# PST Test Version: Enhanced feature fusion using Pyramid Sparse Transformer
+# Based on rtdetr-r18-mm-mid.yaml with PST integration in FPN blocks
+
+# Parameters
+nc: 80  # number of classes
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  l: [1.00, 1.00, 1024]
+
+# Model architecture
+backbone:
+  # RGB Branch - Process RGB modality
+  - [-1, 1, ConvNormLayer, [32, 3, 2, None, False, 'relu'], 'RGB'] # 0-P1/2 RGB input
+  - [-1, 1, ConvNormLayer, [32, 3, 1, None, False, 'relu']] # 1
+  - [-1, 1, ConvNormLayer, [64, 3, 1, None, False, 'relu']] # 2
+  - [-1, 1, nn.MaxPool2d, [3, 2, 1]] # 3-P2/4
+  
+  # X Branch - Process X modality (new input start)
+  - [-1, 1, ConvNormLayer, [32, 3, 2, None, False, 'relu'], 'X'] # 4-P1/2 X input (new start)
+  - [-1, 1, ConvNormLayer, [32, 3, 1, None, False, 'relu']] # 5
+  - [-1, 1, ConvNormLayer, [64, 3, 1, None, False, 'relu']] # 6
+  - [-1, 1, nn.MaxPool2d, [3, 2, 1]] # 7-P2/4
+  
+  # RGB ResNet18 stages
+  - [3, 1, Blocks, [64, BasicBlock, 2, 2, 'relu']] # 8-RGB Stage2
+  - [-1, 1, Blocks, [128, BasicBlock, 2, 3, 'relu']] # 9-RGB Stage3 P3/8
+  
+  # X ResNet18 stages
+  - [7, 1, Blocks, [64, BasicBlock, 2, 2, 'relu']] # 10-X Stage2
+  - [-1, 1, Blocks, [128, BasicBlock, 2, 3, 'relu']] # 11-X Stage3 P3/8
+  
+  # Mid-level Fusion at P3
+  - [[9, 11], 1, Concat, [1]] # 12 - Concat RGB and X features at P3
+  - [-1, 1, Conv, [256, 1, 1]] # 13 - Fusion conv to reduce channels
+  
+  # Continue processing fused features
+  - [-1, 1, Blocks, [256, BasicBlock, 2, 4, 'relu']] # 14-P4/16
+  - [-1, 1, Blocks, [512, BasicBlock, 2, 5, 'relu']] # 15-P5/32
+
+head:
+  # Feature projection and processing
+  - [-1, 1, Conv, [256, 1, 1, None, 1, 1, False]]  # 16 input_proj.2
+  - [-1, 1, AIFI, [1024, 8]] # 17 - Using AIFI instead of HybridEncoder
+  - [-1, 1, Conv, [256, 1, 1]]  # 18, Y5, lateral_convs.0
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 19
+  - [14, 1, Conv, [256, 1, 1, None, 1, 1, False]]  # 20 input_proj.1 (from P4)
+  - [[-2, -1], 1, Concat, [1]] # 21
+  # PST Test: Replace RepC3 with PST for enhanced feature fusion
+  - [[-1, 18], 2, PST, [256, 2.0, 0.5, 0]]  # 22, fpn_blocks.0 with PST
+  - [-1, 1, Conv, [256, 1, 1]]   # 23, Y4, lateral_convs.1
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 24
+  - [13, 1, Conv, [256, 1, 1, None, 1, 1, False]]  # 25 input_proj.0 (from fused P3)
+  - [[-2, -1], 1, Concat, [1]]  # 26 cat backbone P3
+  # PST Test: Another PST block for P3 level fusion
+  - [[-1, 14], 2, PST, [256, 2.0, 0.5, 0]]    # 27, fpn_blocks.1 with PST
+
+  - [-1, 1, Conv, [256, 3, 2]]   # 28, downsample_convs.0
+  - [[-1, 23], 1, Concat, [1]]  # 29 cat Y4
+  - [-1, 3, RepC3, [256, 0.5]]    # 30, pan_blocks.0 (keep RepC3 for PAN)
+
+  - [-1, 1, Conv, [256, 3, 2]]   # 31, downsample_convs.1
+  - [[-1, 18], 1, Concat, [1]]  # 32 cat Y5
+  - [-1, 3, RepC3, [256, 0.5]]    # 33, pan_blocks.1 (keep RepC3 for PAN)
+
+  - [[27, 30, 33], 1, RTDETRDecoder, [nc, 256, 300, 4, 8, 3]]  # Detect(P3, P4, P5)

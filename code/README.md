@@ -1,3 +1,5 @@
-# Code
+# AREF-NET Code
 
-The source code for AREF-NET will be made publicly available in this directory after the paper is accepted for publication.
+The source code is available in [AREF-NET](AREF-NET/).
+
+The uploaded project directory is named `AREF-NET` to match the paper's project name.
