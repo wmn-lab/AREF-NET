@@ -5,22 +5,20 @@ configuration files, and small training/evaluation entry points. It deliberately
 does not include model weights, datasets, ablation settings, experiment logs, or
 the full Ultralytics source tree.
 
-## 1. Obtain the required framework
+## 1. Prepare the required framework
 
-AREF-NET uses the YOLOMM-enabled Ultralytics source used by this project. The
-ordinary `pip install ultralytics` package is not a replacement because the
+The ordinary `pip install ultralytics` package is not a replacement because the
 multimodal `YOLOMM` model and paired RGB/edge dataloader are not part of the
-standard package.
+standard package. This repository therefore includes a small framework patch.
 
-Obtain that YOLOMM framework separately from the project/source distribution and
-make sure the directory contains:
+Follow [`framework/README.md`](../framework/README.md) to download the pinned
+Ultralytics `v8.3.163` source and apply the AREF-NET patch:
 
-```text
-<framework-root>/ultralytics/nn/tasks.py
-<framework-root>/ultralytics/models/yolo/multimodal/
+```bash
+python ../framework/apply_patch.py --framework-root /path/to/ultralytics-8.3.163
 ```
 
-Point this repository to it with:
+Point this repository to the patched checkout with:
 
 ```bash
 export AREF_FRAMEWORK_ROOT=/path/to/YOLOMM-project
