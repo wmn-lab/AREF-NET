@@ -1,0 +1,14 @@
+path: /home/wmn/code/data/seg/MDMCS/HRCDS
+train: images/train
+val: images/val
+test: images/test
+modality:
+  rgb: images
+  edge: images_log
+modality_used: [rgb, edge]
+Xch: 3
+names:
+  0: corrosion
+  1: crack
+  2: exposed rebar
+  3: spalling
